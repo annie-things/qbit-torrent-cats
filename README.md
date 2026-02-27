@@ -1,6 +1,6 @@
 # torrent-cats
 
-Organize completed qBittorrent torrents by tracker code and date, while keeping category save paths compatible with Auto Torrent Management (AutoTMM).
+Organize completed qBittorrent torrents by tracker code and date, while keeping category save paths compatible with Auto Torrent Management (AutoTMM). Works as an on-completion script in qBittorrent, can also be used manually on a per-torrent basis.
 
 ## Behavior
 

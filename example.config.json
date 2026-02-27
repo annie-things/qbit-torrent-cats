@@ -1,0 +1,30 @@
+{
+  "qbt_url": "http://127.0.0.1:8080",
+  "qbt_username": "admin",
+  "qbt_password": "change-me",
+  "sorted_root": "/home/lorem/Downloads-Sorted",
+  "ignore_categories": [
+    "cross-seed-link"
+  ],
+  "ignore_tags": [
+    "cross-seed"
+  ],
+  "preserve_subcategories": [
+    "FL"
+  ],
+  "preserve_subcategory_match_anywhere": false,
+  "month_format": "MMM",
+  "year_format": "YY",
+  "unmapped_category": "UNMAPPED",
+  "require_downloaded_session": true,
+  "downloaded_session_min_bytes": 1,
+  "force_auto_tmm": true,
+  "dry_run": false,
+  "timeout_seconds": 15,
+  "tracker_map": {
+    "lorem.tracker.example": "LOREM",
+    "ipsum.tracker.example": "IPSUM",
+    "dolor.tracker.example": "DOLOR",
+    "*.sit-amet.example": "SIT"
+  }
+}

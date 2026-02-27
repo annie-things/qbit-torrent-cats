@@ -56,12 +56,6 @@ Year token definitions:
 - `YY`: last 2 digits of year (for 2026 -> `26`)
 - `YYYY`: 4-digit year (for 2026 -> `2026`)
 
-Examples for February 2026:
-- `M` + `YY` -> `2-26`
-- `MM` + `YY` -> `02-26`
-- `MMM` + `YY` -> `Feb-26`
-- `MMMM` + `YYYY` -> `February-2026`
-
 ## Tracker Mapping Rules
 
 `tracker_map` accepts:
@@ -133,12 +127,6 @@ Set qBittorrent completion command:
 ```bash
 /opt/torrent-cats/run_torrent_cats.sh "%I"
 ```
-
-## Containerized Deployment
-
-- `qbt_url` must be reachable from where the script runs.
-- `sorted_root` must be valid from qBittorrent's filesystem perspective.
-- If qBittorrent runs in a container, use container-visible paths.
 
 ## Testing
 

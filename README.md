@@ -1,124 +1,89 @@
 # torrent-cats
 
-Organize completed qBittorrent torrents by tracker code and date, while keeping category save paths compatible with Auto Torrent Management (AutoTMM). Works as an on-completion script in qBittorrent, can also be used manually on a per-torrent basis.
+Categorizes completed qBittorrent torrents into AutoTMM-safe categories:
 
-## Behavior
+`<TrackerCode>/<optional preserved subcategory>/<Month-Year>`
 
-Input is a torrent hash (usually qBittorrent completion hook `%I`).
+## What It Does
 
-Processing flow:
+Input is a torrent hash (typically qBittorrent completion hook `%I`).
+Accepted hash formats: 40-char (v1) or 64-char (v2) hexadecimal.
+
+Flow:
 1. Load config.
-2. Fetch torrent info.
-3. Skip if current root category is in `ignore_categories`.
-4. Skip if torrent tags contain any `ignore_tags`.
-5. Skip if `require_downloaded_session` is enabled and downloaded session bytes are below threshold.
-6. Resolve tracker host to a code via `tracker_map`; fallback to `unmapped_category`.
-7. Build target category.
-8. Ensure category exists (create if missing) with save path `<sorted_root>/<target_category>`.
-9. Set torrent category and optionally force AutoTMM on.
+2. Fetch torrent + trackers.
+3. Skip by `ignore_categories`, `ignore_tags`, or downloaded-session threshold.
+4. Resolve tracker host with `tracker_map` (exact first, then longest suffix wildcard).
+5. Build target category and save path.
+6. Create missing category (without modifying existing category save paths).
+7. Set torrent category and optionally re-enable AutoTMM.
 
-Notes:
-- Existing category save paths are intentionally never modified.
-- In `dry_run`, no changes are made; computed values are printed.
-- Requests include `Origin`/`Referer` headers derived from `qbt_url` for WebUI CSRF compatibility.
+`dry_run = true` prints computed output and performs no writes.
 
-## Category Format
+## Category Rules
 
-Target category format:
-`<TrackerCode>/<PreservedSubcategorySegments>/<Month-Year>`
+Build target category from current category:
+1. Split current category by `/`.
+2. Remove leading segment if it already equals computed tracker code.
+3. Remove trailing segment if it matches current month/year token format.
+4. Apply subcategory preservation rules.
+5. Prepend tracker code and append current month/year segment.
 
-How category is built:
-1. Start from current category segments.
-2. If first segment exactly equals computed tracker code, remove it.
-3. If last segment matches configured month-year token format, remove it.
-4. Apply preserve rules.
-5. Prepend tracker code and append current month-year segment.
+Preservation behavior:
+- `preserve_subcategories = "*"` keeps all remaining segments.
+- `preserve_subcategory_match_anywhere = false` keeps remaining segments only when first segment matches a preserved root.
+- `preserve_subcategory_match_anywhere = true` keeps only the first matching segment anywhere.
 
-Preserve rules:
-- `preserve_subcategories: "*"` preserves all remaining segments.
-- `preserve_subcategories` as list/comma string preserves only when rules match.
-- With `preserve_subcategory_match_anywhere: false`:
-  the first remaining segment must match preserve list; if it matches, all remaining segments are kept.
-- With `preserve_subcategory_match_anywhere: true`:
-  first matching segment anywhere is kept as a single preserved segment.
+Example (`month_format = "MMM"`, `year_format = "YY"`, current month = March 2026):
+- Current category: `ATH/FL/Movies/Feb-26`
+- Resolved tracker: `ATH`
+- Settings: `preserve_subcategories = ["FL"]`, `preserve_subcategory_match_anywhere = false`
+- Result category: `ATH/FL/Movies/Mar-26`
 
-## Month/Year Tokens
+## Config
 
-Final date segment is always `<month_token>-<year_token>`.
+Preferred format is TOML so notes can live inline with the config file.
 
-Month token definitions:
-- `M`: `1` to `12` (no leading zero)
-- `MM`: `01` to `12`
-- `MMM`: `Jan`, `Feb`, `Mar`, `Apr`, `May`, `Jun`, `Jul`, `Aug`, `Sep`, `Oct`, `Nov`, `Dec`
-- `MMMM`: `January` to `December`
+- Use `config.toml` (copy from `example.config.toml`)
+- CLI override: `torrent_cats.py <hash> [config_file]`
 
-Year token definitions:
-- `YY`: last 2 digits of year (for 2026 -> `26`)
-- `YYYY`: 4-digit year (for 2026 -> `2026`)
+Default lookup when no CLI config is provided:
+1. `config.toml` beside script
+2. If missing, run with defaults
 
-## Tracker Mapping Rules
+## Key Settings
 
-`tracker_map` accepts:
-- JSON object: `{ "host": "CODE" }`
-- JSON list: `[{"pattern":"host-or-wildcard","code":"CODE"}]`
+| Key | Default | Purpose |
+|---|---|---|
+| `qbt_url` | `http://127.0.0.1:8080` | qBittorrent WebUI base URL (`http`/`https`) |
+| `qbt_username` / `qbt_password` | `""` / `""` | Set both or neither |
+| `sorted_root` | `~/Downloads-Sorted` | Root path used for category save paths |
+| `ignore_categories` | `""` | Skip when current root category matches |
+| `ignore_tags` | `""` | Skip when torrent has matching tag |
+| `preserve_subcategories` | `"FL"` | Preserved roots list, comma string, or `"*"` |
+| `preserve_subcategory_match_anywhere` | `false` | Preserve first match anywhere (instead of first segment only) |
+| `month_format` | `MMM` | `M`, `MM`, `MMM`, or `MMMM` |
+| `year_format` | `YY` | `YY` or `YYYY` |
+| `unmapped_category` | `UNMAPPED` | Fallback tracker code when no mapping matches |
+| `require_downloaded_session` | `true` | Gate processing on session-downloaded bytes |
+| `downloaded_session_min_bytes` | `1` | Minimum bytes when gate is enabled |
+| `force_auto_tmm` | `true` | Re-enable AutoTMM after category update |
+| `dry_run` | `false` | Compute/log only |
+| `timeout_seconds` | `15` | qBittorrent API timeout (`> 0`) |
+| `tracker_map` | `{}` | TOML table mapping host/wildcard (`*.example.org`) to tracker code |
 
-Matching behavior:
-1. Exact host match first.
-2. Wildcard/suffix matches next (`*.example.org` or `.example.org`).
-3. Longest suffix wins when multiple suffixes match.
-4. If no match, use `unmapped_category`.
-
-Tracker host normalization:
-- Lowercased.
-- Trailing dots removed.
-
-## Configuration Reference
-
-Defaults shown are code defaults.
-
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `qbt_url` | string | `http://127.0.0.1:8080` | Absolute qBittorrent WebUI URL (`http`/`https`). |
-| `qbt_username` | string | `""` | WebUI username. Must be set together with password, or both unset. |
-| `qbt_password` | string | `""` | WebUI password. |
-| `sorted_root` | string | `~/Downloads-Sorted` | Root directory used to build category save paths. |
-| `ignore_categories` | array or comma string | `""` | Skip torrent when current root category matches (case-insensitive). |
-| `ignore_tags` | array or comma string | `""` | Skip torrent when any tag matches (case-insensitive). |
-| `preserve_subcategories` | array, comma string, or `"*"` string | `"FL"` | Controls preserved category segments. Use literal string `"*"` to preserve all. |
-| `preserve_subcategory_match_anywhere` | boolean | `false` | If true, preserve matching can come from any segment and keeps only first match. |
-| `month_format` | string | `MMM` | Month token format. Allowed: `M`, `MM`, `MMM`, `MMMM`. |
-| `year_format` | string | `YY` | Year token format. Allowed: `YY`, `YYYY`. |
-| `unmapped_category` | string | `UNMAPPED` | Tracker code used when no mapping matches. |
-| `require_downloaded_session` | boolean | `true` | Only process when session downloaded bytes threshold is met. |
-| `downloaded_session_min_bytes` | integer >= 0 | `1` | Minimum downloaded session bytes required. |
-| `force_auto_tmm` | boolean | `true` | Re-enable AutoTMM after setting category. |
-| `dry_run` | boolean | `false` | Print computed result only; perform no writes. |
-| `timeout_seconds` | integer | `15` | HTTP timeout for qBittorrent API calls; must be `> 0`. |
-| `tracker_map` | object or list | `{}` | Tracker host/pattern to category code mapping. |
-
-Type parsing details:
-- Boolean strings accepted: `1,true,yes,on` and `0,false,no,off`.
-- Integer settings accept numeric strings.
-- String-list settings accept either array form or comma-separated string form.
-
-## Config File Resolution
-
-Resolution order:
-1. CLI argument: `torrent_cats.py <hash> [config_file]`
-2. Fallback: `config.json` beside the script.
-
-Path behavior:
-- If config path is relative, it is resolved relative to the script directory (not current shell directory).
-- If no config file exists at fallback location, script runs with defaults.
-- If explicit config path is provided but missing, script exits with error.
+Type parsing:
+- Booleans also accept strings: `1,true,yes,on` and `0,false,no,off`.
+- Integer settings also accept numeric strings.
+- List settings accept arrays or comma-separated strings.
 
 ## Install
 
 ```bash
 sudo mkdir -p /opt/torrent-cats
-sudo cp torrent_cats.py run_torrent_cats.sh example.config.json /opt/torrent-cats/
+sudo cp torrent_cats.py run_torrent_cats.sh example.config.toml /opt/torrent-cats/
 cd /opt/torrent-cats
-sudo cp example.config.json config.json
+sudo cp example.config.toml config.toml
 sudo chmod +x run_torrent_cats.sh torrent_cats.py
 ```
 
@@ -128,17 +93,16 @@ Set qBittorrent completion command:
 /opt/torrent-cats/run_torrent_cats.sh "%I"
 ```
 
-## Testing
+## Quick Validation
 
-Use dry-run first:
-1. Set `"dry_run": true` in config.
+1. Set `dry_run = true` in config.
 2. Run with a known hash:
 
 ```bash
 /opt/torrent-cats/run_torrent_cats.sh "<INFO_HASH>"
 ```
 
-Optional logging from completion hook:
+Optional completion-hook logging:
 
 ```bash
 /opt/torrent-cats/run_torrent_cats.sh "%I" >> /opt/torrent-cats/torrent_cats.log 2>&1

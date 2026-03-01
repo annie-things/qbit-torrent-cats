@@ -1,0 +1,51 @@
+# qBittorrent WebUI base URL.
+qbt_url = "http://127.0.0.1:8080"
+
+# Set both username/password or leave both empty.
+qbt_username = "admin"
+qbt_password = "change-me"
+
+# Root used for computed category save paths.
+sorted_root = "/home/lorem/Downloads-Sorted"
+
+# Skip torrents already under these root categories.
+ignore_categories = ["cross-seed-link"]
+
+# Skip torrents if any of these tags are present.
+ignore_tags = ["cross-seed"]
+
+# Keep these subcategory roots (or use "*" to keep all).
+preserve_subcategories = ["FL"]
+
+# true: keep first matching segment anywhere in the path.
+# false: only keep when the first segment matches.
+preserve_subcategory_match_anywhere = false
+
+# Month token: M, MM, MMM, MMMM
+month_format = "MMM"
+
+# Year token: YY, YYYY
+year_format = "YY"
+
+# Used when no tracker_map rule matches.
+unmapped_category = "UNMAPPED"
+
+# Only process torrents with downloaded_session >= downloaded_session_min_bytes.
+require_downloaded_session = true
+downloaded_session_min_bytes = 1
+
+# Re-enable AutoTMM after setting category.
+force_auto_tmm = true
+
+# true = print computed result only; no writes to qBittorrent.
+dry_run = false
+
+# API timeout in seconds.
+timeout_seconds = 15
+
+# Tracker mapping rules: exact host or wildcard suffix.
+[tracker_map]
+"lorem.tracker.example" = "LOREM"
+"ipsum.tracker.example" = "IPSUM"
+"dolor.tracker.example" = "DOLOR"
+"*.sit-amet.example" = "SIT"

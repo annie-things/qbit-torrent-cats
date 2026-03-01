@@ -8,13 +8,14 @@ import http.cookiejar
 import json
 import re
 import sys
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 
-DEFAULT_CONFIG_FILE = "config.json"
+DEFAULT_CONFIG_FILE = "config.toml"
 DEFAULT_SORTED_ROOT_DIRNAME = "Downloads-Sorted"
 DEFAULT_IGNORE_CATEGORIES = ""
 DEFAULT_IGNORE_TAGS = ""
@@ -42,12 +43,16 @@ MONTH_NAMES_LONG = (
 )
 ALLOWED_MONTH_FORMATS = {"MM", "M", "MMM", "MMMM"}
 ALLOWED_YEAR_FORMATS = {"YY", "YYYY"}
+INFO_HASH_PATTERN = re.compile(r"^(?:[A-Fa-f0-9]{40}|[A-Fa-f0-9]{64})$")
 
 
 def load_config_file(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise RuntimeError(f"Unable to parse TOML config file {path}: {exc}") from exc
     if not isinstance(payload, dict):
-        raise RuntimeError(f"Config file must contain a JSON object: {path}")
+        raise RuntimeError(f"Config file must contain an object at top-level: {path}")
     return payload
 
 
@@ -272,20 +277,17 @@ def parse_tracker_map_payload(payload: object, source_name: str) -> list[tuple[s
 
     if isinstance(payload, dict):
         iterator = payload.items()
-    elif isinstance(payload, list):
-        iterator = []
-        for item in payload:
-            if not isinstance(item, dict):
-                raise RuntimeError(f"{source_name} list entries must be objects.")
-            pattern = str(item.get("pattern", "")).strip()
-            code = str(item.get("code", "")).strip()
-            iterator.append((pattern, code))
     else:
-        raise RuntimeError(f"{source_name} must be a JSON object or list.")
+        raise RuntimeError(f"{source_name} must be a TOML table/object.")
 
     for pattern, code in iterator:
-        norm_pattern = str(pattern).strip().lower().rstrip(".")
-        norm_code = str(code).strip()
+        if not isinstance(pattern, str):
+            raise RuntimeError(f"Invalid mapping key in {source_name}: keys must be strings.")
+        if not isinstance(code, str):
+            raise RuntimeError(f"Invalid mapping value for '{pattern}' in {source_name}: code must be a string.")
+
+        norm_pattern = pattern.strip().lower().rstrip(".")
+        norm_code = code.strip()
         if not norm_pattern or not norm_code:
             raise RuntimeError(
                 f"Invalid mapping in {source_name}: pattern='{pattern}' code='{code}' must be non-empty."
@@ -483,9 +485,16 @@ def validate_qbt_url(base_url: str) -> None:
         raise RuntimeError("Setting 'qbt_url' must be an absolute URL such as http://127.0.0.1:8080.")
 
 
+def validate_torrent_hash(torrent_hash: str) -> str:
+    normalized = torrent_hash.strip().lower()
+    if not INFO_HASH_PATTERN.fullmatch(normalized):
+        raise RuntimeError("Torrent hash must be 40-char (v1) or 64-char (v2) hexadecimal.")
+    return normalized
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
-        print("Usage: torrent_cats.py <torrent_hash> [config_file]", file=sys.stderr)
+        print("Usage: torrent_cats.py <torrent_hash> [config_file(.toml)]", file=sys.stderr)
         return 2
 
     script_dir = Path(__file__).resolve().parent
@@ -497,7 +506,7 @@ def main(argv: list[str]) -> int:
     else:
         config = {}
 
-    torrent_hash = argv[1].strip()
+    torrent_hash = validate_torrent_hash(argv[1])
     base_url = read_string_setting(config, "qbt_url", "http://127.0.0.1:8080").rstrip("/")
     username = read_string_setting(config, "qbt_username", "")
     password = read_string_setting(config, "qbt_password", "")

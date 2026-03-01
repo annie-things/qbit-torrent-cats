@@ -14,12 +14,26 @@ ignore_categories = ["cross-seed-link"]
 # Skip torrents if any of these tags are present.
 ignore_tags = ["cross-seed"]
 
-# Keep these subcategory roots (or use "*" to keep all).
-preserve_subcategories = ["FL"]
+# Case-sensitive matching for preserve_tiers keys against category segments.
+case_sensitive_match = false
 
-# true: keep first matching segment anywhere in the path.
-# false: only keep when the first segment matches.
-preserve_subcategory_match_anywhere = false
+# Tier layout (X.Y only). Lower tiers appear earlier in final category.
+# Reserved keys:
+#   tracker = tracker code placement tier
+#   date    = month-year placement tier
+#   "*"     = leftover behavior: "ignore" or tier value (e.g. "3.0")
+#
+# Named keys (e.g. FL, Movies, 4K) are matched from existing category.
+# If matched multiple times, first occurrence is used.
+[preserve_tiers]
+tracker = "0.0"
+FL = "1.0"
+date = "2.0"
+Movies = "2.1"
+Music = "2.2"
+Sports = "2.3"
+"4K" = "3.0"
+"*" = "ignore"
 
 # Month token: M, MM, MMM, MMMM
 month_format = "MMM"
@@ -33,6 +47,11 @@ unmapped_category = "UNMAPPED"
 # Only process torrents with downloaded_session >= downloaded_session_min_bytes.
 require_downloaded_session = true
 downloaded_session_min_bytes = 1
+
+# Optional hard cutoff: skip torrents added before this date.
+# Leave empty to disable.
+# Accepts: YYYY-MM-DD, MM-DD-YYYY, MM/DD/YYYY (or TOML date: 2026-01-01)
+min_added_date = ""
 
 # Re-enable AutoTMM after setting category.
 force_auto_tmm = true

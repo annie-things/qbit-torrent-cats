@@ -19,13 +19,19 @@ DEFAULT_CONFIG_FILE = "config.toml"
 DEFAULT_SORTED_ROOT_DIRNAME = "Downloads-Sorted"
 DEFAULT_IGNORE_CATEGORIES = ""
 DEFAULT_IGNORE_TAGS = ""
-DEFAULT_PRESERVE_SUBCATEGORIES = "FL"
 DEFAULT_UNMAPPED_CATEGORY = "UNMAPPED"
 DEFAULT_MONTH_FORMAT = "MMM"
 DEFAULT_YEAR_FORMAT = "YY"
 DEFAULT_TIMEOUT_SECONDS = 15
 DEFAULT_REQUIRE_DOWNLOADED_SESSION = True
 DEFAULT_DOWNLOADED_SESSION_MIN_BYTES = 1
+DEFAULT_MIN_ADDED_DATE = ""
+DEFAULT_CASE_SENSITIVE_MATCH = False
+DEFAULT_PRESERVE_TIERS: dict[str, str] = {
+    "tracker": "0.0",
+    "date": "1.0",
+    "*": "ignore",
+}
 MONTH_NAMES_SHORT = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 MONTH_NAMES_LONG = (
     "January",
@@ -43,7 +49,9 @@ MONTH_NAMES_LONG = (
 )
 ALLOWED_MONTH_FORMATS = {"MM", "M", "MMM", "MMMM"}
 ALLOWED_YEAR_FORMATS = {"YY", "YYYY"}
+ALLOWED_MIN_ADDED_DATE_FORMATS = ("%Y-%m-%d", "%m-%d-%Y", "%m/%d/%Y")
 INFO_HASH_PATTERN = re.compile(r"^(?:[A-Fa-f0-9]{40}|[A-Fa-f0-9]{64})$")
+TIER_PATTERN = re.compile(r"^(\d+)\.(\d+)$")
 
 
 def load_config_file(path: Path) -> dict[str, Any]:
@@ -76,6 +84,31 @@ def parse_year_format(value: object, setting_name: str) -> str:
     return normalized
 
 
+def parse_min_added_date(value: object, setting_name: str) -> dt.date | None:
+    if value is None:
+        return None
+
+    if isinstance(value, dt.datetime):
+        return value.date()
+
+    if isinstance(value, dt.date):
+        return value
+
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        for fmt in ALLOWED_MIN_ADDED_DATE_FORMATS:
+            try:
+                return dt.datetime.strptime(candidate, fmt).date()
+            except ValueError:
+                continue
+
+    raise RuntimeError(
+        f"Setting '{setting_name}' must be empty or a date in YYYY-MM-DD, MM-DD-YYYY, or MM/DD/YYYY format."
+    )
+
+
 def format_month_year_segment(month_format: str, year_format: str, now: dt.datetime | None = None) -> str:
     current = now or dt.datetime.now()
     if month_format == "MM":
@@ -97,28 +130,6 @@ def format_month_year_segment(month_format: str, year_format: str, now: dt.datet
         raise RuntimeError(f"Unsupported year format: {year_format}")
 
     return f"{month_part}-{year_part}"
-
-
-def month_year_segment_pattern(month_format: str, year_format: str) -> re.Pattern[str]:
-    if month_format == "MM":
-        month_pattern = r"(0[1-9]|1[0-2])"
-    elif month_format == "M":
-        month_pattern = r"([1-9]|1[0-2])"
-    elif month_format == "MMM":
-        month_pattern = "(" + "|".join(MONTH_NAMES_SHORT) + ")"
-    elif month_format == "MMMM":
-        month_pattern = "(" + "|".join(MONTH_NAMES_LONG) + ")"
-    else:
-        raise RuntimeError(f"Unsupported month format: {month_format}")
-
-    if year_format == "YY":
-        year_pattern = r"\d{2}"
-    elif year_format == "YYYY":
-        year_pattern = r"\d{4}"
-    else:
-        raise RuntimeError(f"Unsupported year format: {year_format}")
-
-    return re.compile(rf"^{month_pattern}-{year_pattern}$")
 
 
 def parse_string_list(value: object, setting_name: str) -> list[str]:
@@ -144,13 +155,79 @@ def parse_ignore_tags(value: object) -> set[str]:
     return {item.lower() for item in parse_string_list(value, "ignore_tags")}
 
 
-def parse_preserve_roots(value: object) -> tuple[bool, set[str]]:
-    if isinstance(value, str):
-        candidate = value.strip()
-        if candidate == "*":
-            return True, set()
-        return False, {item.lower() for item in parse_string_list(candidate, "preserve_subcategories")}
-    return False, {item.lower() for item in parse_string_list(value, "preserve_subcategories")}
+def parse_tier_value(value: object, setting_name: str) -> tuple[int, int]:
+    if not isinstance(value, str):
+        raise RuntimeError(f"Setting '{setting_name}' tier must be a string in X.Y format.")
+    candidate = value.strip()
+    match = TIER_PATTERN.fullmatch(candidate)
+    if not match:
+        raise RuntimeError(f"Setting '{setting_name}' tier must use X.Y format (example: 2.1).")
+    return int(match.group(1)), int(match.group(2))
+
+
+def normalize_match_key(value: str, case_sensitive_match: bool) -> str:
+    return value if case_sensitive_match else value.lower()
+
+
+def parse_preserve_tiers_config(
+    value: object,
+    case_sensitive_match: bool,
+) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int] | None, dict[str, tuple[str, tuple[int, int]]]]:
+    if not isinstance(value, dict):
+        raise RuntimeError("Setting 'preserve_tiers' must be a TOML table/object.")
+
+    raw_map: dict[str, object] = dict(DEFAULT_PRESERVE_TIERS)
+    for raw_key, raw_val in value.items():
+        if not isinstance(raw_key, str):
+            raise RuntimeError("Setting 'preserve_tiers' keys must be strings.")
+        key = raw_key.strip()
+        if not key:
+            raise RuntimeError("Setting 'preserve_tiers' cannot have empty keys.")
+        raw_map[key] = raw_val
+
+    tracker_tier = parse_tier_value(raw_map.get("tracker"), "preserve_tiers.tracker")
+    date_tier = parse_tier_value(raw_map.get("date"), "preserve_tiers.date")
+
+    star_raw = raw_map.get("*", "ignore")
+    star_tier: tuple[int, int] | None
+    if isinstance(star_raw, str) and star_raw.strip().lower() == "ignore":
+        star_tier = None
+    else:
+        star_tier = parse_tier_value(star_raw, "preserve_tiers.*")
+
+    tier_to_key: dict[tuple[int, int], str] = {
+        tracker_tier: "tracker",
+        date_tier: "date",
+    }
+    if star_tier is not None:
+        if star_tier in tier_to_key:
+            existing = tier_to_key[star_tier]
+            raise RuntimeError(
+                f"Duplicate tier '{star_tier[0]}.{star_tier[1]}' in preserve_tiers: '*' conflicts with '{existing}'."
+            )
+        tier_to_key[star_tier] = "*"
+
+    preserve_segment_rules: dict[str, tuple[str, tuple[int, int]]] = {}
+    for key, raw_tier in raw_map.items():
+        if key in {"tracker", "date", "*"}:
+            continue
+        tier = parse_tier_value(raw_tier, f"preserve_tiers.{key}")
+        if tier in tier_to_key:
+            existing = tier_to_key[tier]
+            raise RuntimeError(
+                f"Duplicate tier '{tier[0]}.{tier[1]}' in preserve_tiers: '{key}' conflicts with '{existing}'."
+            )
+        tier_to_key[tier] = key
+
+        normalized_key = normalize_match_key(key, case_sensitive_match)
+        if normalized_key in preserve_segment_rules:
+            existing = preserve_segment_rules[normalized_key][0]
+            raise RuntimeError(
+                f"Duplicate preserve key under case sensitivity rules: '{key}' conflicts with '{existing}'."
+            )
+        preserve_segment_rules[normalized_key] = (key, tier)
+
+    return tracker_tier, date_tier, star_tier, preserve_segment_rules
 
 
 def parse_bool(value: object, setting_name: str) -> bool:
@@ -235,24 +312,42 @@ def build_target_category(
     tracker_code: str,
     current_category: str,
     month_year: str,
-    month_year_pattern: re.Pattern[str],
-    preserve_all: bool,
-    preserve_roots: set[str],
-    preserve_match_anywhere: bool,
+    tracker_tier: tuple[int, int],
+    date_tier: tuple[int, int],
+    star_tier: tuple[int, int] | None,
+    preserve_segment_rules: dict[str, tuple[str, tuple[int, int]]],
+    case_sensitive_match: bool,
 ) -> str:
-    preserved = split_category(current_category)
-    if preserved and preserved[0] == tracker_code:
-        preserved = preserved[1:]
-    if preserved and month_year_pattern.fullmatch(preserved[-1]):
-        preserved = preserved[:-1]
-    if preserved and not preserve_all:
-        if preserve_match_anywhere:
-            matched_segment = next((segment for segment in preserved if segment.lower() in preserve_roots), "")
-            preserved = [matched_segment] if matched_segment else []
-        elif preserved[0].lower() not in preserve_roots:
-            preserved = []
-    parts = [tracker_code, *preserved, month_year]
-    return "/".join(part for part in parts if part)
+    entries: list[tuple[tuple[int, int], int, str]] = []
+    sequence = 0
+
+    entries.append((tracker_tier, sequence, tracker_code))
+    sequence += 1
+    entries.append((date_tier, sequence, month_year))
+    sequence += 1
+
+    seen_matched_keys: set[str] = set()
+    leftovers: list[str] = []
+    for segment in split_category(current_category):
+        normalized = normalize_match_key(segment, case_sensitive_match)
+        rule = preserve_segment_rules.get(normalized)
+        if rule is None:
+            leftovers.append(segment)
+            continue
+        if normalized in seen_matched_keys:
+            continue
+        seen_matched_keys.add(normalized)
+        output_name, tier = rule
+        entries.append((tier, sequence, output_name))
+        sequence += 1
+
+    if star_tier is not None:
+        for segment in leftovers:
+            entries.append((star_tier, sequence, segment))
+            sequence += 1
+
+    ordered = sorted(entries, key=lambda item: (item[0][0], item[0][1], item[1]))
+    return "/".join(part for _, _, part in ordered if part)
 
 
 def build_save_path(root: Path, category: str) -> str:
@@ -464,6 +559,34 @@ def resolve_downloaded_session_bytes(
     return 0
 
 
+def resolve_torrent_added_on_datetime_utc(torrent_info: dict[str, object]) -> dt.datetime | None:
+    added_on_raw = read_int_like(torrent_info.get("added_on"))
+    if added_on_raw is None:
+        return None
+    if added_on_raw <= 0:
+        return None
+    return dt.datetime.fromtimestamp(added_on_raw, tz=dt.timezone.utc)
+
+
+def resolve_torrent_added_on_date(torrent_info: dict[str, object]) -> dt.date | None:
+    added_on_dt = resolve_torrent_added_on_datetime_utc(torrent_info)
+    if added_on_dt is None:
+        return None
+    return added_on_dt.date()
+
+
+def resolve_category_datetime_utc(
+    torrent_info: dict[str, object],
+    fallback_now: dt.datetime | None = None,
+) -> dt.datetime:
+    added_on_dt = resolve_torrent_added_on_datetime_utc(torrent_info)
+    if added_on_dt is not None:
+        return added_on_dt
+    if fallback_now is not None:
+        return fallback_now
+    return dt.datetime.now(dt.timezone.utc)
+
+
 def resolve_config_path(script_dir: Path, argv: list[str]) -> tuple[Path, bool]:
     arg_config = argv[2].strip() if len(argv) >= 3 else ""
 
@@ -520,12 +643,18 @@ def main(argv: list[str]) -> int:
 
     ignore_roots = parse_ignore_roots(config.get("ignore_categories", DEFAULT_IGNORE_CATEGORIES))
     ignore_tags = parse_ignore_tags(config.get("ignore_tags", DEFAULT_IGNORE_TAGS))
-    preserve_all, preserve_roots = parse_preserve_roots(
-        config.get("preserve_subcategories", DEFAULT_PRESERVE_SUBCATEGORIES)
+    if "preserve_subcategories" in config or "preserve_subcategory_match_anywhere" in config:
+        raise RuntimeError(
+            "Legacy preserve settings are no longer supported. "
+            "Use 'case_sensitive_match' and '[preserve_tiers]' instead."
+        )
+    case_sensitive_match = parse_bool(
+        config.get("case_sensitive_match", DEFAULT_CASE_SENSITIVE_MATCH),
+        "case_sensitive_match",
     )
-    preserve_match_anywhere = parse_bool(
-        config.get("preserve_subcategory_match_anywhere", False),
-        "preserve_subcategory_match_anywhere",
+    tracker_tier, date_tier, star_tier, preserve_segment_rules = parse_preserve_tiers_config(
+        config.get("preserve_tiers", {}),
+        case_sensitive_match,
     )
     force_auto_tmm = parse_bool(config.get("force_auto_tmm", True), "force_auto_tmm")
     dry_run = parse_bool(config.get("dry_run", False), "dry_run")
@@ -542,6 +671,10 @@ def main(argv: list[str]) -> int:
         config.get("downloaded_session_min_bytes", DEFAULT_DOWNLOADED_SESSION_MIN_BYTES),
         "downloaded_session_min_bytes",
     )
+    min_added_date = parse_min_added_date(
+        config.get("min_added_date", DEFAULT_MIN_ADDED_DATE),
+        "min_added_date",
+    )
 
     unmapped_category = read_string_setting(
         config,
@@ -550,9 +683,6 @@ def main(argv: list[str]) -> int:
     )
     if not unmapped_category:
         raise RuntimeError("unmapped_category must be a non-empty string.")
-
-    month_year = format_month_year_segment(month_format, year_format)
-    month_year_pattern = month_year_segment_pattern(month_format, year_format)
 
     exact_map, suffix_map = load_tracker_rule_maps(config)
 
@@ -568,6 +698,20 @@ def main(argv: list[str]) -> int:
         client.login(username, password)
 
     torrent = client.get_torrent(torrent_hash)
+    category_datetime = resolve_category_datetime_utc(torrent)
+    added_on_datetime = resolve_torrent_added_on_datetime_utc(torrent)
+    added_on_date = added_on_datetime.date() if added_on_datetime is not None else None
+    gate_date = category_datetime.date()
+    gate_date_source = "added_on" if added_on_datetime is not None else "runtime_utc_fallback"
+    if min_added_date is not None and gate_date < min_added_date:
+        print(
+            f"Skipped {torrent_hash}: effective_added_on={gate_date.isoformat()} "
+            f"(source={gate_date_source}) is older than min_added_date={min_added_date.isoformat()}."
+        )
+        return 0
+
+    month_year = format_month_year_segment(month_format, year_format, now=category_datetime)
+
     current_category = str(torrent.get("category", "") or "").strip()
     if should_ignore(current_category, ignore_roots):
         print(f"Skipped {torrent_hash}: category '{current_category}' is ignored.")
@@ -596,10 +740,11 @@ def main(argv: list[str]) -> int:
         tracker_code,
         current_category,
         month_year,
-        month_year_pattern,
-        preserve_all,
-        preserve_roots,
-        preserve_match_anywhere,
+        tracker_tier,
+        date_tier,
+        star_tier,
+        preserve_segment_rules,
+        case_sensitive_match,
     )
     target_path = build_save_path(sorted_root, target_category)
 
@@ -608,6 +753,9 @@ def main(argv: list[str]) -> int:
             "DRY RUN:",
             f"hash={torrent_hash}",
             f"tracker={matched_host or 'unknown'}",
+            f"added_on={added_on_date.isoformat() if added_on_date else 'unknown'}",
+            f"category_date_source={'added_on' if added_on_datetime else 'runtime_utc_fallback'}",
+            f"effective_added_on_for_gate={gate_date.isoformat()}",
             f"current_category={current_category or '(none)'}",
             f"downloaded_session={downloaded_session_bytes}",
             f"target_category={target_category}",
